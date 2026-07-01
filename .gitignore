@@ -1,3 +1,13 @@
 node_modules/
 dist/
 .DS_Store
+AGENTS.md
+PROGRESS.md
+ITERATION_LOG.md
+DECISIONS.md
+docs/reddit-fixture-capture-guide.md
+docs/reddit-media-extractor-v0-spec.md
+docs/reddit-real-download-test-guide.md
+docs/reddit-ui-bridge-contract.md
+docs/reddit-ui-dry-run-test-guide.md
+docs/twittermediaharvest-ui-bridge-audit.md

@@ -13,8 +13,14 @@ import {
   getRedditMediaSource,
   normalizeRedditMediaUrl,
 } from '../reddit/reddit-url-normalizer.ts'
-import { injectRedditDryRunButton } from './reddit-injected-button.ts'
-import { showRedditDryRunPanel } from './reddit-dry-run-panel.ts'
+import {
+  applyRedditDownloadButtonState,
+  injectRedditDryRunButton,
+} from './reddit-injected-button.ts'
+import {
+  hasDownloadedRedditPost,
+  markRedditPostDownloaded,
+} from './reddit-downloaded-posts.ts'
 
 type DownloadClient = (
   request: StartDownloadRequest
@@ -39,10 +45,13 @@ export class RedditDryRunUIController {
     const root = this.options.root ?? document.body
     this.observer = new RedditMediaObserver({
       root,
-      onPostMedia: (_context, element) => {
-        injectRedditDryRunButton(element, () =>
-          void runRedditDryRunForPost(element, this.downloadClient)
-        )
+      onPostMedia: (context, element) => {
+        const button = injectRedditDryRunButton(element, () => {
+          void runRedditDryRunForPost(element, this.downloadClient).then(response =>
+            this.markDownloadedAfterSuccess(context.postId, button, response)
+          )
+        })
+        if (button) void this.refreshDownloadedState(context.postId, button)
       },
     })
     this.observer.start()
@@ -52,6 +61,35 @@ export class RedditDryRunUIController {
     this.observer?.stop()
     this.observer = undefined
   }
+
+  private async refreshDownloadedState(
+    postId: string,
+    button: HTMLButtonElement
+  ): Promise<void> {
+    if (await hasDownloadedRedditPost(postId)) {
+      applyRedditDownloadButtonState(button, 'downloaded')
+    }
+  }
+
+  private async markDownloadedAfterSuccess(
+    postId: string,
+    button: HTMLButtonElement | null,
+    response: StartDownloadResponse | null
+  ): Promise<void> {
+    if (!button || !isFullySuccessfulRealDownload(response)) return
+    await markRedditPostDownloaded(postId)
+    applyRedditDownloadButtonState(button, 'downloaded')
+  }
+}
+
+function isFullySuccessfulRealDownload(
+  response: StartDownloadResponse | null
+): response is StartDownloadResponse {
+  return Boolean(
+    response?.realDownloadExecuted &&
+      response.results.length > 0 &&
+      response.results.every(result => result.ok)
+  )
 }
 
 export function runRedditDryRunForPost(
@@ -91,15 +129,6 @@ export function runRedditDryRunForPost(
         results: [],
         warnings: [error instanceof Error ? error.message : String(error)],
       }))
-      .then(response => {
-        showRedditDryRunPanel({
-          context: genericContext,
-          jobs,
-          response,
-        })
-
-        return response
-      })
     })
 }
 

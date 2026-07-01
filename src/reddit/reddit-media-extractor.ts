@@ -40,7 +40,10 @@ export function extractRedditMediaFromPostElement(
 
   const warnings = new Set<string>()
   const candidates = collectRawCandidates(postElement)
-  const media = normalizeCandidates(candidates, warnings)
+  const media = collapseSingleImagePreviewCandidates(
+    normalizeCandidates(candidates, warnings),
+    postElement
+  )
 
   if (media.length === 0) return null
 
@@ -238,6 +241,33 @@ function normalizeCandidates(
   )
   if (supported.length > 0) return supported
   return unsupported.slice(0, 1)
+}
+
+function collapseSingleImagePreviewCandidates(
+  media: RedditMediaItem[],
+  postElement: Element
+): RedditMediaItem[] {
+  if (isGalleryPostElement(postElement)) return media
+
+  const images = media.filter(item => item.type === 'image')
+  const originals = images.filter(item => item.source === 'i.redd.it')
+  const previews = images.filter(item => item.source === 'preview.redd.it')
+  if (
+    originals.length !== 1 ||
+    previews.length === 0 ||
+    originals.length + previews.length !== images.length
+  ) {
+    return media
+  }
+
+  return media.filter(item => item.type !== 'image' || item === originals[0])
+}
+
+function isGalleryPostElement(postElement: Element): boolean {
+  return Boolean(
+    postElement.querySelector('shreddit-gallery, gallery-carousel') ||
+      postElement.textContent?.match(/\bItem\s+\d+\s+of\s+\d+\b/i)
+  )
 }
 
 function pickType(

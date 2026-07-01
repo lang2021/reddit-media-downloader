@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { JSDOM } from 'jsdom'
 import { DryRunMediaBridge } from '../src/bridge/DryRunMediaBridge.ts'
-import { genericMediaContextToDownloadJobs } from '../src/bridge/generic-download-jobs.ts'
+import {
+  DEFAULT_REDDIT_DOWNLOAD_DIRECTORY,
+  genericMediaContextToDownloadJobs,
+} from '../src/bridge/generic-download-jobs.ts'
 import type { GenericMediaPostContext } from '../src/bridge/generic-media-types.ts'
 import { redditMediaContextToGenericMediaContext } from '../src/bridge/reddit-to-generic-media.ts'
 import { extractRedditMediaFromPostElement } from '../src/reddit/reddit-media-extractor.ts'
@@ -46,7 +49,7 @@ function extractGenericFixtureContext(
   assert.deepEqual(genericMediaContextToDownloadJobs(context!), [
     {
       url: 'https://i.redd.it/nimg123.jpg',
-      filename: 'reddit_r_pics_alice_nimg123_1.jpg',
+      filename: `${DEFAULT_REDDIT_DOWNLOAD_DIRECTORY}/reddit_r_pics_alice_nimg123_1.jpg`,
       metadata: {
         platform: 'reddit',
         postId: 'nimg123',
@@ -106,7 +109,38 @@ function extractGenericFixtureContext(
     ],
   }
   const jobs = genericMediaContextToDownloadJobs(context)
-  assert.equal(jobs[0].filename, 'reddit_r_pics_and_videos_some_user_abc_123_1.jpg')
+  assert.equal(
+    jobs[0].filename,
+    `${DEFAULT_REDDIT_DOWNLOAD_DIRECTORY}/reddit_r_pics_and_videos_some_user_abc_123_1.jpg`
+  )
+  assert.equal(jobs[0].filename.split('/').length, 2)
+}
+
+{
+  const context: GenericMediaPostContext = {
+    platform: 'reddit',
+    postId: 'dupejob',
+    author: 'alice',
+    community: 'r/pics',
+    media: [
+      {
+        type: 'image',
+        url: 'https://i.redd.it/dupe-image.jpg?utm_source=share',
+        index: 0,
+      },
+      {
+        type: 'image',
+        url: 'https://preview.redd.it/dupe-image.jpg?width=960&format=pjpg',
+        index: 1,
+      },
+    ],
+  }
+  const jobs = genericMediaContextToDownloadJobs(context)
+  assert.equal(jobs.length, 1)
+  assert.equal(
+    jobs[0].filename,
+    `${DEFAULT_REDDIT_DOWNLOAD_DIRECTORY}/reddit_r_pics_alice_dupejob_1.jpg`
+  )
 }
 
 {
@@ -133,4 +167,3 @@ function extractGenericFixtureContext(
 }
 
 console.log('reddit generic bridge checks passed')
-

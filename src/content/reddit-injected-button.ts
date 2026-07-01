@@ -1,7 +1,13 @@
 const buttonAttribute = 'data-reddit-media-dry-run-button'
 const actionShellAttribute = 'data-reddit-media-dry-run-action-shell'
+const stateAttribute = 'data-reddit-media-download-state'
+const downloadIconPath =
+  'M12,16l-5.7-5.7l1.4-1.4l3.3,3.3V2.6h2v9.6l3.3-3.3l1.4,1.4L12,16z M21,15l0,3.5c0,1.4-1.1,2.5-2.5,2.5h-13C4.1,21,3,19.9,3,18.5V15h2v3.5C5,18.8,5.2,19,5.5,19h13c0.3,0,0.5-0.2,0.5-0.5l0-3.5H21z'
+const downloadedIconPath =
+  'M17.5,16.5h-11v-3h11V16.5z M17.5,9.3h-11v3h11V9.3z M17.5,5h-11v3h11V5z M19,15l0,3.5c0,0.3-0.2,0.5-0.5,0.5h-13C5.2,19,5,18.8,5,18.5V15H3v3.5C3,19.9,4.1,21,5.5,21h13c1.4,0,2.5-1.1,2.5-2.5l0-3.5H19z'
 
 type ClickHandler = (event: MouseEvent) => void
+export type RedditDownloadButtonState = 'default' | 'downloaded'
 
 export function hasRedditDryRunButton(postElement: Element): boolean {
   const host = resolveButtonHost(postElement)
@@ -21,35 +27,36 @@ export function injectRedditDryRunButton(
   const root = postElement.ownerDocument
   const button = root.createElement('button')
   button.type = 'button'
-  button.textContent = 'Media'
   button.title = 'Download Reddit images / 下载 Reddit 图片'
   button.setAttribute('aria-label', 'Download Reddit images')
   button.setAttribute(buttonAttribute, 'true')
+  button.setAttribute(stateAttribute, 'default')
+  button.append(createDownloadIcon(root))
   Object.assign(button.style, {
     alignItems: 'center',
     appearance: 'none',
-    background: 'rgba(0, 0, 0, 0.06)',
+    background: '#b8f8c5',
     border: '0',
     borderRadius: '999px',
-    color: 'inherit',
+    color: '#0f3d1e',
     cursor: 'pointer',
     display: 'inline-flex',
     font: '600 12px/1 system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
     height: '32px',
     justifyContent: 'center',
     margin: '0',
-    padding: '0 12px',
-    minWidth: '0',
+    padding: '0',
+    minWidth: '32px',
     whiteSpace: 'nowrap',
     verticalAlign: 'middle',
-    width: 'fit-content',
+    width: '32px',
   })
 
   button.addEventListener('mouseenter', () => {
-    button.style.background = 'rgba(0, 0, 0, 0.1)'
+    button.style.background = getButtonPalette(button).hoverBackground
   })
   button.addEventListener('mouseleave', () => {
-    button.style.background = 'rgba(0, 0, 0, 0.06)'
+    button.style.background = getButtonPalette(button).background
   })
   button.addEventListener('click', event => {
     event.preventDefault()
@@ -73,6 +80,66 @@ export function injectRedditDryRunButton(
   }
   host.append(button)
   return button
+}
+
+export function applyRedditDownloadButtonState(
+  button: HTMLButtonElement,
+  state: RedditDownloadButtonState
+): void {
+  button.setAttribute(stateAttribute, state)
+  button.title =
+    state === 'downloaded'
+      ? 'Downloaded Reddit images / 已下载 Reddit 图片'
+      : 'Download Reddit images / 下载 Reddit 图片'
+  button.setAttribute(
+    'aria-label',
+    state === 'downloaded' ? 'Reddit images downloaded' : 'Download Reddit images'
+  )
+
+  const palette = getButtonPalette(button)
+  button.style.background = palette.background
+  button.style.color = palette.color
+  const path = button.querySelector('path')
+  path?.setAttribute('d', state === 'downloaded' ? downloadedIconPath : downloadIconPath)
+}
+
+function createDownloadIcon(root: Document): SVGSVGElement {
+  const svg = root.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('focusable', 'false')
+  Object.assign(svg.style, {
+    display: 'block',
+    height: '16px',
+    width: '16px',
+  })
+
+  const path = root.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', downloadIconPath)
+  path.setAttribute('fill', 'currentColor')
+  svg.append(path)
+
+  return svg
+}
+
+function getButtonPalette(button: HTMLButtonElement): {
+  background: string
+  hoverBackground: string
+  color: string
+} {
+  if (button.getAttribute(stateAttribute) === 'downloaded') {
+    return {
+      background: '#fff0b8',
+      hoverBackground: '#ffe58a',
+      color: '#7a5200',
+    }
+  }
+
+  return {
+    background: '#b8f8c5',
+    hoverBackground: '#a7efb8',
+    color: '#0f3d1e',
+  }
 }
 
 function resolveButtonHost(postElement: Element): Element {

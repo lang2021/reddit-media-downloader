@@ -79,7 +79,7 @@ export function mediaIdentityKey(url: string): string {
   const pathname = parsed.pathname
     .replace(/\/(?:preview|external-preview)\//i, '/')
     .replace(/[-_](?:thumbnail|thumb|preview)(?=\.)/i, '')
-  return `${parsed.hostname.replace(/^preview\.|^external-preview\./, '')}${pathname}`
+  return `${parsed.hostname.replace(/^(?:i\.|preview\.|external-preview\.)/, '')}${pathname}`
 }
 
 export function classifyRedditMediaUrl(url: string): RedditMediaType {

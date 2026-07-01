@@ -2,11 +2,20 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { JSDOM } from 'jsdom'
-import type { StartDownloadRequest } from '../src/messages/download-messages.ts'
+import type {
+  StartDownloadRequest,
+  StartDownloadResponse,
+} from '../src/messages/download-messages.ts'
 import {
+  applyRedditDownloadButtonState,
   hasRedditDryRunButton,
   injectRedditDryRunButton,
 } from '../src/content/reddit-injected-button.ts'
+import {
+  hasDownloadedRedditPost,
+  markRedditPostDownloaded,
+  REDDIT_DOWNLOADED_POSTS_STORAGE_KEY,
+} from '../src/content/reddit-downloaded-posts.ts'
 import {
   RedditDryRunUIController,
   runRedditDryRunForPost,
@@ -14,6 +23,14 @@ import {
 import { findRedditPostElements } from '../src/reddit/reddit-post-detector.ts'
 
 const fixtureDir = 'tests/fixtures/reddit'
+type FakeStorage = {
+  data: Record<string, unknown>
+  get: (
+    key: string,
+    callback?: (items: Record<string, unknown>) => void
+  ) => void
+  set: (items: Record<string, unknown>, callback?: () => void) => void
+}
 
 function loadFixture(name: string): Document {
   const html = readFileSync(join(fixtureDir, name), 'utf8')
@@ -30,6 +47,29 @@ function loadFixture(name: string): Document {
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function makeFakeStorage(data: Record<string, unknown> = {}): FakeStorage {
+  return {
+    data,
+    get(key, callback) {
+      callback?.({ [key]: this.data[key] })
+    },
+    set(items, callback) {
+      Object.assign(this.data, items)
+      callback?.()
+    },
+  }
+}
+
+function installFakeChromeStorage(storage: FakeStorage): () => void {
+  const originalChrome = (globalThis as { chrome?: unknown }).chrome
+  ;(globalThis as { chrome?: unknown }).chrome = {
+    storage: { local: storage },
+  }
+  return () => {
+    ;(globalThis as { chrome?: unknown }).chrome = originalChrome
+  }
 }
 
 function firstPost(name: string): Element {
@@ -50,6 +90,17 @@ async function withQuietConsole(callback: () => void | Promise<void>): Promise<v
     console.info = info
     console.table = table
   }
+}
+
+async function clickFirstRedditDownloadButton(document: Document): Promise<void> {
+  const button = document.querySelector<HTMLButtonElement>(
+    '[data-reddit-media-dry-run-button="true"]'
+  )
+  assert.ok(button)
+  await withQuietConsole(async () => {
+    button.click()
+    await wait(0)
+  })
 }
 
 function makeGalleryJson(postId: string, urls: string[]): unknown {
@@ -79,21 +130,52 @@ function makeGalleryJson(postId: string, urls: string[]): unknown {
 }
 
 {
+  const storage = makeFakeStorage()
+  assert.equal(await hasDownloadedRedditPost('stored_post', storage), false)
+  await markRedditPostDownloaded('stored_post', storage)
+  assert.equal(await hasDownloadedRedditPost('stored_post', storage), true)
+  assert.deepEqual(storage.data, {
+    [REDDIT_DOWNLOADED_POSTS_STORAGE_KEY]: { stored_post: true },
+  })
+}
+
+{
   const post = firstPost('new-image-post.html')
   const button = injectRedditDryRunButton(post, () => undefined)
 
   assert.ok(button)
   assert.equal(hasRedditDryRunButton(post), true)
-  assert.equal(button?.textContent, 'Media')
+  assert.equal(button?.textContent, '')
   assert.equal(button?.title, 'Download Reddit images / 下载 Reddit 图片')
   assert.equal(button?.getAttribute('aria-label'), 'Download Reddit images')
+  assert.equal(button?.querySelector('svg')?.getAttribute('aria-hidden'), 'true')
+  assert.equal(
+    button?.querySelector('path')?.getAttribute('fill'),
+    'currentColor'
+  )
   assert.equal(button?.parentElement, post)
   assert.equal(button?.style.position, 'absolute')
   assert.equal(button?.style.right, '12px')
   assert.equal(button?.style.bottom, '12px')
   assert.equal(button?.style.zIndex, '2147483646')
   assert.equal(button?.style.display, 'inline-flex')
+  assert.equal(button?.style.background, 'rgb(184, 248, 197)')
+  assert.equal(button?.style.color, 'rgb(15, 61, 30)')
   assert.equal(button?.style.borderRadius, '999px')
+  assert.equal(button?.style.width, '32px')
+  assert.equal(button?.style.minWidth, '32px')
+
+  assert.ok(button)
+  applyRedditDownloadButtonState(button, 'downloaded')
+  assert.equal(button.title, 'Downloaded Reddit images / 已下载 Reddit 图片')
+  assert.equal(button.getAttribute('aria-label'), 'Reddit images downloaded')
+  assert.equal(button.style.background, 'rgb(255, 240, 184)')
+  assert.equal(button.style.color, 'rgb(122, 82, 0)')
+  assert.match(button.querySelector('path')?.getAttribute('d') ?? '', /^M17\.5/)
+  applyRedditDownloadButtonState(button, 'default')
+  assert.equal(button.title, 'Download Reddit images / 下载 Reddit 图片')
+  assert.equal(button.getAttribute('aria-label'), 'Download Reddit images')
+  assert.equal(button.style.background, 'rgb(184, 248, 197)')
 }
 
 {
@@ -165,6 +247,7 @@ function makeGalleryJson(postId: string, urls: string[]): unknown {
   assert.equal(button?.style.zIndex, '2147483646')
   assert.equal(button?.style.borderRadius, '999px')
   assert.equal(button?.style.height, '32px')
+  assert.equal(button?.style.width, '32px')
 }
 
 {
@@ -241,9 +324,255 @@ function makeGalleryJson(postId: string, urls: string[]): unknown {
   assert.equal(requests.length, 1)
   assert.equal(requests[0].requestedMode, 'chrome')
   assert.equal(requests[0].context.postId, 'nimg123')
-  assert.equal(requests[0].jobs[0].filename, 'reddit_r_pics_alice_nimg123_1.jpg')
+  assert.equal(
+    requests[0].jobs[0].filename,
+    'reddit_media_harvest/reddit_r_pics_alice_nimg123_1.jpg'
+  )
   assert.equal(requests[0].jobs[0].metadata?.mediaType, 'image')
-  assert.ok(document.getElementById('reddit-media-dry-run-panel'))
+  assert.equal(document.getElementById('reddit-media-dry-run-panel'), null)
+}
+
+{
+  const document = loadFixture('new-image-post.html')
+  const storage = makeFakeStorage({
+    [REDDIT_DOWNLOADED_POSTS_STORAGE_KEY]: { nimg123: true },
+  })
+  const restoreChrome = installFakeChromeStorage(storage)
+  const controller = new RedditDryRunUIController({
+    root: document.body,
+    downloadClient: async request => ({
+      type: 'START_MEDIA_DOWNLOAD_RESULT',
+      mode: 'chrome',
+      realDownloadExecuted: true,
+      results: request.jobs.map(job => ({
+        filename: job.filename,
+        url: job.url,
+        ok: true,
+      })),
+      warnings: [],
+    }),
+  })
+
+  try {
+    controller.start()
+    await wait(0)
+
+    const button = document.querySelector<HTMLButtonElement>(
+      '[data-reddit-media-dry-run-button="true"]'
+    )
+    assert.ok(button)
+    assert.equal(button.title, 'Downloaded Reddit images / 已下载 Reddit 图片')
+    assert.equal(button.getAttribute('aria-label'), 'Reddit images downloaded')
+    assert.match(button.querySelector('path')?.getAttribute('d') ?? '', /^M17\.5/)
+  } finally {
+    controller.stop()
+    restoreChrome()
+  }
+}
+
+{
+  const document = loadFixture('new-image-post.html')
+  const storage = makeFakeStorage()
+  const restoreChrome = installFakeChromeStorage(storage)
+  const controller = new RedditDryRunUIController({
+    root: document.body,
+    downloadClient: async request => ({
+      type: 'START_MEDIA_DOWNLOAD_RESULT',
+      mode: 'chrome',
+      realDownloadExecuted: true,
+      results: request.jobs.map(job => ({
+        filename: job.filename,
+        url: job.url,
+        ok: true,
+      })),
+      warnings: [],
+    }),
+  })
+
+  try {
+    controller.start()
+    await clickFirstRedditDownloadButton(document)
+
+    assert.deepEqual(storage.data, {
+      [REDDIT_DOWNLOADED_POSTS_STORAGE_KEY]: { nimg123: true },
+    })
+    const button = document.querySelector<HTMLButtonElement>(
+      '[data-reddit-media-dry-run-button="true"]'
+    )
+    assert.equal(button?.title, 'Downloaded Reddit images / 已下载 Reddit 图片')
+  } finally {
+    controller.stop()
+    restoreChrome()
+  }
+}
+
+for (const responseForRequest of [
+  (request: StartDownloadRequest): StartDownloadResponse => ({
+    type: 'START_MEDIA_DOWNLOAD_RESULT',
+    mode: 'dry-run',
+    realDownloadExecuted: false,
+    results: request.jobs.map(job => ({
+      filename: job.filename,
+      url: job.url,
+      ok: true,
+    })),
+    warnings: [],
+  }),
+  (): StartDownloadResponse => ({
+    type: 'START_MEDIA_DOWNLOAD_RESULT',
+    mode: 'chrome',
+    realDownloadExecuted: true,
+    results: [],
+    warnings: [],
+  }),
+  (request: StartDownloadRequest): StartDownloadResponse => ({
+    type: 'START_MEDIA_DOWNLOAD_RESULT',
+    mode: 'chrome',
+    realDownloadExecuted: true,
+    results: request.jobs.map((job, index) => ({
+      filename: job.filename,
+      url: job.url,
+      ok: index !== 0,
+      ...(index === 0 ? { error: 'download_failed' } : {}),
+    })),
+    warnings: [],
+  }),
+  (request: StartDownloadRequest): StartDownloadResponse => ({
+    type: 'START_MEDIA_DOWNLOAD_RESULT',
+    mode: 'chrome',
+    realDownloadExecuted: false,
+    results: request.jobs.map(job => ({
+      filename: job.filename,
+      url: job.url,
+      ok: false,
+      error: 'download_failed',
+    })),
+    warnings: [],
+  }),
+]) {
+  const document = loadFixture('new-image-post.html')
+  const storage = makeFakeStorage()
+  const restoreChrome = installFakeChromeStorage(storage)
+  const controller = new RedditDryRunUIController({
+    root: document.body,
+    downloadClient: async request => responseForRequest(request),
+  })
+
+  try {
+    controller.start()
+    await clickFirstRedditDownloadButton(document)
+
+    assert.deepEqual(storage.data, {})
+    const button = document.querySelector<HTMLButtonElement>(
+      '[data-reddit-media-dry-run-button="true"]'
+    )
+    assert.equal(button?.title, 'Download Reddit images / 下载 Reddit 图片')
+  } finally {
+    controller.stop()
+    restoreChrome()
+  }
+}
+
+{
+  const document = loadFixture('new-image-post.html')
+  const storage = makeFakeStorage()
+  const restoreChrome = installFakeChromeStorage(storage)
+  const requests: StartDownloadRequest[] = []
+  const controller = new RedditDryRunUIController({
+    root: document.body,
+    downloadClient: async request => {
+      requests.push(request)
+      return {
+        type: 'START_MEDIA_DOWNLOAD_RESULT',
+        mode: 'dry-run',
+        realDownloadExecuted: false,
+        results: request.jobs.map(job => ({
+          filename: job.filename,
+          url: job.url,
+          ok: true,
+        })),
+        warnings: [],
+      }
+    },
+  })
+
+  try {
+    controller.start()
+    await Promise.resolve()
+    await markRedditPostDownloaded('nimg123', storage)
+    const post = findRedditPostElements(document)[0]
+    assert.ok(post)
+    post.append(document.createElement('span'))
+    await wait(200)
+    await clickFirstRedditDownloadButton(document)
+
+    const buttons = document.querySelectorAll('[data-reddit-media-dry-run-button="true"]')
+    assert.equal(buttons.length, 1)
+    assert.equal(requests.length, 1)
+    assert.equal(
+      (buttons[0] as HTMLButtonElement).title,
+      'Downloaded Reddit images / 已下载 Reddit 图片'
+    )
+  } finally {
+    controller.stop()
+    restoreChrome()
+  }
+}
+
+{
+  const dom = new JSDOM(`
+    <shreddit-post
+      id="t3_singlepreview"
+      post-title="Single preview and original"
+      author="u/realposter"
+      subreddit-name="r/pics"
+      permalink="/r/pics/comments/singlepreview/single_preview_and_original/"
+    >
+      <a href="/r/pics/comments/singlepreview/single_preview_and_original/">Permalink</a>
+      <img
+        alt=""
+        src="https://preview.redd.it/single-preview-v0-previewtoken.jpeg?width=640&amp;crop=smart&amp;auto=webp"
+        srcset="https://preview.redd.it/single-preview-v0-previewtoken.jpeg?width=320&amp;crop=smart&amp;auto=webp 320w, https://preview.redd.it/single-preview-v0-previewtoken.jpeg?width=1080&amp;crop=smart&amp;auto=webp 1080w"
+      />
+      <img
+        alt="r/pics - Single preview and original"
+        src="https://i.redd.it/originaltoken.jpeg"
+      />
+    </shreddit-post>
+  `, { url: 'https://www.reddit.com/r/pics/comments/singlepreview/single_preview_and_original/' })
+  globalThis.document = dom.window.document
+  globalThis.location = dom.window.location
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.HTMLImageElement = dom.window.HTMLImageElement
+  globalThis.HTMLButtonElement = dom.window.HTMLButtonElement
+
+  const post = dom.window.document.querySelector('shreddit-post')
+  const requests: StartDownloadRequest[] = []
+  assert.ok(post)
+
+  await withQuietConsole(async () => {
+    await runRedditDryRunForPost(post, async request => {
+      requests.push(request)
+      return {
+        type: 'START_MEDIA_DOWNLOAD_RESULT',
+        mode: 'chrome',
+        realDownloadExecuted: true,
+        results: request.jobs.map(job => ({
+          filename: job.filename,
+          url: job.url,
+          ok: true,
+        })),
+        warnings: request.context.warnings,
+      }
+    })
+  })
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(
+    requests[0].jobs.map(job => job.url),
+    ['https://i.redd.it/originaltoken.jpeg']
+  )
 }
 
 {
@@ -409,6 +738,68 @@ function makeGalleryJson(postId: string, urls: string[]): unknown {
     assert.equal(requests[0].jobs.length, 15)
     assert.equal(requests[0].jobs[0].url, 'https://i.redd.it/gallery-b-1.png')
     assert.equal(requests[0].jobs[14].url, 'https://i.redd.it/gallery-b-15.png')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+{
+  const dom = new JSDOM(`
+    <shreddit-post
+      id="t3_dupegal"
+      post-title="Duplicate gallery"
+      author="dupe_author"
+      subreddit-name="pics"
+      permalink="/r/pics/comments/dupegal/duplicate_gallery/"
+    >
+      <gallery-carousel>
+        <img src="https://i.redd.it/dupe-gallery.png" />
+        <span>Item 1 of 2</span>
+      </gallery-carousel>
+    </shreddit-post>
+  `, { url: 'https://www.reddit.com/r/pics/' })
+  globalThis.document = dom.window.document
+  globalThis.location = dom.window.location
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.HTMLImageElement = dom.window.HTMLImageElement
+  globalThis.HTMLButtonElement = dom.window.HTMLButtonElement
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => ({
+    ok: true,
+    json: async () =>
+      makeGalleryJson('dupegal', [
+        'https://i.redd.it/dupe-gallery.png',
+        'https://i.redd.it/dupe-gallery.png?utm_source=share',
+      ]),
+  }) as unknown as Response) as typeof fetch
+
+  try {
+    const requests: StartDownloadRequest[] = []
+    const post = dom.window.document.querySelector('#t3_dupegal')
+    assert.ok(post)
+
+    await withQuietConsole(async () => {
+      await runRedditDryRunForPost(post, async request => {
+        requests.push(request)
+        return {
+          type: 'START_MEDIA_DOWNLOAD_RESULT',
+          mode: 'chrome',
+          realDownloadExecuted: true,
+          results: request.jobs.map(job => ({
+            filename: job.filename,
+            url: job.url,
+            ok: true,
+          })),
+          warnings: request.context.warnings,
+        }
+      })
+    })
+
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].jobs.length, 1)
+    assert.equal(requests[0].jobs[0].url, 'https://i.redd.it/dupe-gallery.png')
   } finally {
     globalThis.fetch = originalFetch
   }

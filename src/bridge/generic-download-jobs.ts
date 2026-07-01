@@ -1,4 +1,8 @@
-import { inferExtensionFromUrl } from '../reddit/reddit-url-normalizer.ts'
+import {
+  inferExtensionFromUrl,
+  mediaIdentityKey,
+  normalizeRedditMediaUrl,
+} from '../reddit/reddit-url-normalizer.ts'
 import type {
   GenericDownloadJob,
   GenericMediaItem,
@@ -11,6 +15,8 @@ type DownloadJobOptions = {
   indexPad?: number
 }
 
+export const DEFAULT_REDDIT_DOWNLOAD_DIRECTORY = 'reddit_media_harvest'
+
 const defaultFilenameTemplate =
   '{platform}_{community}_{author}_{postId}_{index}.{ext}'
 
@@ -18,19 +24,21 @@ export function genericMediaContextToDownloadJobs(
   context: GenericMediaPostContext,
   options: DownloadJobOptions = {}
 ): GenericDownloadJob[] {
-  return context.media
-    .filter(item => item.type !== 'unsupported' && item.url)
+  return dedupeMedia(context)
     .map((item, jobIndex) => {
       const index = item.index + 1 || jobIndex + 1
       return {
         url: item.url ?? '',
-        filename: makeFilename({
+        filename: withDefaultDownloadDirectory(
           context,
-          item,
-          index,
-          indexPad: options.indexPad,
-          template: options.filenameTemplate ?? defaultFilenameTemplate,
-        }),
+          makeFilename({
+            context,
+            item,
+            index,
+            indexPad: options.indexPad,
+            template: options.filenameTemplate ?? defaultFilenameTemplate,
+          })
+        ),
         ...(options.mode ? { mode: options.mode } : {}),
         metadata: {
           platform: context.platform,
@@ -40,6 +48,37 @@ export function genericMediaContextToDownloadJobs(
         },
       }
     })
+}
+
+function dedupeMedia(context: GenericMediaPostContext): GenericMediaItem[] {
+  const seen = new Set<string>()
+  return context.media
+    .filter(item => item.type !== 'unsupported' && item.url)
+    .filter(item => {
+      const key = mediaKey(context, item)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function mediaKey(
+  context: GenericMediaPostContext,
+  item: GenericMediaItem
+): string {
+  if (context.platform !== 'reddit') return item.url ?? ''
+
+  const normalized = normalizeRedditMediaUrl(item.url ?? '')
+  return normalized ? mediaIdentityKey(normalized) : item.url ?? ''
+}
+
+function withDefaultDownloadDirectory(
+  context: GenericMediaPostContext,
+  filename: string
+): string {
+  return context.platform === 'reddit'
+    ? `${DEFAULT_REDDIT_DOWNLOAD_DIRECTORY}/${filename}`
+    : filename
 }
 
 function makeFilename({

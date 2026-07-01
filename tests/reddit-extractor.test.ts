@@ -67,9 +67,45 @@ function assertFixtureSafety(name: string, html: string): void {
   assert.deepEqual(redditMediaContextToDownloadJobs(context!), [
     {
       url: 'https://i.redd.it/nimg123.jpg',
-      filename: 'pics_alice_nimg123_01.jpg',
+      filename: 'reddit_media_harvest/pics_alice_nimg123_01.jpg',
     },
   ])
+}
+
+{
+  const dom = new JSDOM(`
+    <shreddit-post
+      id="t3_singlepreview"
+      post-title="Single preview and original"
+      author="u/realposter"
+      subreddit-name="r/pics"
+      permalink="/r/pics/comments/singlepreview/single_preview_and_original/"
+    >
+      <a href="/r/pics/comments/singlepreview/single_preview_and_original/">Permalink</a>
+      <img
+        alt=""
+        src="https://preview.redd.it/single-preview-v0-previewtoken.jpeg?width=640&amp;crop=smart&amp;auto=webp"
+        srcset="https://preview.redd.it/single-preview-v0-previewtoken.jpeg?width=320&amp;crop=smart&amp;auto=webp 320w, https://preview.redd.it/single-preview-v0-previewtoken.jpeg?width=1080&amp;crop=smart&amp;auto=webp 1080w"
+      />
+      <img
+        alt="r/pics - Single preview and original"
+        src="https://i.redd.it/originaltoken.jpeg"
+      />
+    </shreddit-post>
+  `, { url: 'https://www.reddit.com/r/pics/comments/singlepreview/single_preview_and_original/' })
+  globalThis.document = dom.window.document
+  globalThis.location = dom.window.location
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.HTMLImageElement = dom.window.HTMLImageElement
+  globalThis.MutationObserver = dom.window.MutationObserver
+
+  const post = dom.window.document.querySelector('shreddit-post')
+  assert.ok(post)
+  const context = extractRedditMediaFromPostElement(post)
+
+  assert.equal(context?.media.length, 1)
+  assert.equal(context?.media[0].url, 'https://i.redd.it/originaltoken.jpeg')
 }
 
 {
